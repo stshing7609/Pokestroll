@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="utf-8" />
+	<title>Let's go on a Pok&eacute;Stroll!</title>
+	
+	<link rel="shortcut icon" href="images/8bitpokeball.ico" />
+	
+	<link rel="stylesheet" href="main.css" type="text/css" />
+
+	<!--import scripts-->
+	<script src="scripts/utils.js"></script>
+	<script src="scripts/draw.js"></script>
+	<script src="scripts/sound.js"></script>
+	<script src="scripts/animate.js"></script>
+	<script src="scripts/weather.js"></script>
+	
+	<script>
+		"use strict";
+		window.addEventListener("load", loadImages);
+		//window.onload = init;
+		
+		// CONSTANTS
+		var CANVAS_WIDTH = 1000;
+		var CANVAS_HEIGHT = 600;
+		var KEYBOARD = {
+			"KEY_A": 65,
+			"KEY_D": 68,
+			"KEY_W": 87,
+			"KEY_S": 83,
+			"KEY_ESC": 27
+		};
+		var IMAGE_SOURCES = {
+			pokemonSpriteSheet: "images/PokemonSpriteSheet.png",
+			playerSpriteSheet: "images/TrainerSpriteSheet.png",
+			bigCloud: "images/bigCloud.png",
+			littleCloud: "images/littleCloud.png",
+			grassTile: "images/grassTile.png",
+			shortGrass: "images/shortGrass.png",
+			groundTile: "images/groundTile.png"
+		};
+		var DEFAULT_SCROLL_SPEED = 1;	// set the default scroll speed to 1
+		var DEFAULT_PLAYER_SPEED = 20;	// set the speed at which the player moves to 20 frames (update the player sprite every 20 frames)
+		
+		// The following constants are used when setting up the array that holds the 151 sprites
+		// in the pokemonSpriteSheet
+		var MAX_COL = 15;
+		var MAX_ROW = 11;
+		
+		
+		// GLOBALS
+		var canvas;
+		var ctx;
+		var images = {};					// Used to load the images
+		var pokemonArray = [];				// Used only to draw pokemon images
+		var keydown = [];
+		var scrollSpeed = 0;				// speed at which to scroll the images
+		var playerSpeed = 0;				// speed at which the player image updates
+		var player;	
+		var timer = 0;						// timer to update the player
+		var paused;
+		var lastTime = 0;
+		var cloudArray = [];				// array only for clouds
+		var timeOfDay = 0;					// Used to check the time of day: 0=morning, 1=sunset, 2=night
+		var showAstronomicalBody = true;			// Default is to show the sun or moon
+		var showPlayerShadow = false;		// Default is to not show the player's shadow
+		var isRaining = false;				// is it raining? defaults to not
+		var isSnowing = false;				// is it snowing? defaults to not
+		
+		// Sound GLOBALS
+		//Audio context, audio analyzer and audio source globals
+		var songFile;
+		var statusDiv;
+		var isPlaying = false;
+		var keydown = [];
+		var trackPos = 0;
+		var prevTrackPos = 0;
+		var startTime = 0;		
+		var reverseBufferData;	 		
+		var bufferData;				// holds the result of loading and decoding the sound file for quick play/pause
+		var isReversed = false;
+		var playbackSpeed = 1;		// used as multiplier to calc elapsed time (for determining where to resume play for all play conditions)
+		var minutes = 0;
+		var seconds = 0;
+		var audioCtx, analyzerNode, sourceNode; 
+		
+		
+		
+		function init(){
+			//console.log("init called");
+			
+			var canvas = document.querySelector("canvas");
+			canvas.width = CANVAS_WIDTH;
+			canvas.height = CANVAS_HEIGHT;
+			
+			ctx = canvas.getContext("2d");
+			
+			// set up		
+			player = {
+				color: "orange",
+				x: 235,
+				y: 260,
+				width: 32,
+				height:40,
+				speed: 100,
+				sx: 0,
+				sy: 80,
+				
+				draw: function(ctx) { // relies of on global variable ctx
+					var halfW = this.width/2;
+					var halfH = this.height/2;
+					ctx.fillStyle = this.color;
+					//ctx.fillRect(this.x-halfW, this.y-halfH, this.width, this.height);
+					ctx.drawImage(images["playerSpriteSheet"], this.sx, this.sy, this.width, this.height, this.x-halfW, this.y-halfH, this.width, this.height);
+				} // end of draw
+			};
+			
+			// EXTRA: make screens using css elements even though it's a yucky
+			var game = document.querySelector("#game");
+			game.style.display = "none";
+			var instructions = document.querySelector("#instScreen");
+			instructions.style.display = "none";			
+			var mainMenu = document.querySelector("#menuScreen");
+			
+			document.querySelector("#startButton").addEventListener("click", function(e) {
+				mainMenu.style.display = "none";
+				game.style.display = "block";
+				statusDiv.style.visibility = "visible";
+			});
+			document.querySelector("#instButton").addEventListener("click", function(e) {
+				mainMenu.style.display = "none";
+				instructions.style.display = "block";
+			});
+			document.querySelector("#backButton").addEventListener("click", function(e) {
+				instructions.style.display = "none";
+				mainMenu.style.display = "block";
+			});
+			
+			
+			scrollSpeed = DEFAULT_SCROLL_SPEED;
+			playerSpeed = DEFAULT_PLAYER_SPEED;
+			
+			// Hide the controls until the song has been loaded
+			var controls = document.querySelector("#controls");
+			controls.style.visibility = "hidden";			
+			statusDiv = document.getElementById("status");
+			statusDiv.style.visibility = "hidden";
+			
+			setUpUI();
+			
+			// sound
+			audioCtx = new webkitAudioContext();
+			setUpDragDropAndLoad(canvas);
+			
+			// event listeners
+			window.addEventListener("keydown", function(e) {
+				keydown[e.keyCode] = true;
+			});
+			window.addEventListener("keyup", function(e) {
+				keydown[e.keyCode] = false;
+			});
+			
+			// draw everything
+			drawAll();
+		}
+		
+		// loads all of the possible images
+		function loadImages() {
+			var numLoadedImages = 0;
+			var numImages = 0;
+			// get num of sources
+			for(var imageName in IMAGE_SOURCES) {
+				numImages++;
+			}
+			
+			// load images
+			for(var imageName in IMAGE_SOURCES) {
+				//console.log("Started loading " + imageName);
+				images[imageName] = new Image();
+				images[imageName].src = IMAGE_SOURCES[imageName];
+				images[imageName].onload = function() {
+					//console.log(this.arc + " load complete");
+					if(++numLoadedImages >= numImages) {
+						//console.log("Done loading images");
+						init(); // start the game
+					}
+				};
+			}
+		}
+		
+		// Sets up the UI
+		function setUpUI() {
+			// Button to change the time of day
+			var timeOfDayButton = document.querySelector("#timeOfDay");
+			timeOfDayButton.addEventListener("click", function(e) {
+				timeOfDay++;
+				if(timeOfDay > 2) timeOfDay = 0;
+				if(timeOfDay == 0) e.target.innerHTML = "Make It Sundown!";
+				if(timeOfDay == 1) e.target.innerHTML = "Make It Night!";
+				if(timeOfDay == 2) e.target.innerHTML = "Make It Morning!";
+				// redraw everything
+				drawAll();
+			});
+			
+			// Checkbox to toggle the Astronomical body (the sun or the moon)
+			var toggleAstronomicalBodyCheckbox = document.querySelector("#toggleAstronomicalBody");
+			toggleAstronomicalBodyCheckbox.addEventListener("click", function(e) {
+				showAstronomicalBody = !showAstronomicalBody;
+				// redraw everything
+				drawAll();
+			});
+			
+			// Checkbox to toggle the player shadow
+			var togglePlayerShadowCheckbox = document.querySelector("#togglePlayerShadow");
+			togglePlayerShadowCheckbox.addEventListener("click", function(e) {
+				showPlayerShadow = !showPlayerShadow;
+				// redraw everything
+				drawAll();
+			});
+			
+			// options to choose weather from
+			var weatherSelector = document.querySelector("#weatherSelector");
+			weatherSelector.addEventListener("change", function(e) {
+				var value = e.target.value;
+				
+				if(value == "rain") 
+				{
+					isRaining = true;
+					isSnowing = false;
+					snowBuffer = null; 	// clears "snowpile" when not snowing
+					snow = [];			// resets 
+				}
+				else if(value == "snow") 
+				{
+					isRaining = false;
+					isSnowing = true;
+					rain = [];
+					splashes = []; 
+				}
+				else if(value == "default")
+				{
+					isRaining = false;
+					isSnowing = false;
+					snowBuffer = null;
+					snow = [];
+					rain = [];
+					splashes = [];
+				}
+			});
+			
+			
+		}
+	</script>
+</head>
+<body>
+<div id="container">
+	<div id="menuScreen">
+		<img src="images/pokestroll.png" alt="" id="logo"/>		
+		<input id="startButton" type="button" value="Start!"/>
+		<input id="instButton" type="button" value="Instructions"/>
+		<<a href="../index.html"><input id="aboutButton" type="button" value="About"/></a>
+	</div>
+	
+	<div id="instScreen">
+		<h2>Let's go on a Pok&eacute;Stroll!</h2>
+		<p><strong>To start your journey, you MUST drag and drop a song onto the scene.</strong></p>
+		<p>Then, use the W/A/S/D keys to move your trainer and manipulate the audio.</p>
+		<p>It would help to know that only .mp3 and .wma will work!</p>
+		<ul>
+			<li>[CONTROLS]</li>
+			<li>W : plays audio at 2x / speeds up animations</li>
+			<li>A : plays audio in reverse / animations go backwards</li>
+			<li>S : plays audio at 0.5x / slows down animations</li>
+			<li>D : plays audio normally at 1x / normal animations</li>
+			<li>Press nothing, and everything in the scene stops...!</li>
+		</ul>
+		<p>You can also have fun toggling various effects as you enjoy the scene,<br>
+		like changing the time of day. Try them all!</p>
+		<p>Either drag and drop another song while playing, or <br>
+		press your F5 key to refresh if you'd like to start over again!</p>
+		
+		<input id="backButton" type="button" value="Back"/>
+	</div>
+	
+	<canvas id="game"> 	
+	Get a browser that supports Canvas! 	
+	</canvas>
+	
+	<div id="controls">
+		<span><button id="timeOfDay" type="button">Make It Sundown!</button></span>
+		<span><input id="toggleAstronomicalBody" type="checkbox" checked><label class="checkboxes">Astronomical Body</label></input></span>
+		<span><input id="togglePlayerShadow" type="checkbox"><label class="checkboxes">Player Shadow</label></input></span>
+	
+		<span>			
+			<select id="weatherSelector">
+				<option value="???">What should the weather do?</option>
+				<option value="rain">Give me RAIN!</option>
+				<option value="snow">Give me SNOW!</option>
+				<option value="default">I just want a CLEAR SKY!</option>
+			</select>
+		</span>
+	</div>
+	
+	<div id="status">Drag and drop a song!</div>
+</div>
+</body>
+</html>
